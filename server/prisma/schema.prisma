@@ -1,0 +1,521 @@
+// CWC On-Demand Warehousing — PostgreSQL schema.
+// Phase 1 data is Gujarat-only (stateCode = "GJ"), but nothing here is Gujarat-specific.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CWC_ADMIN
+  REGIONAL_MGR
+  PARTNER_3PL
+  AUDITOR
+}
+
+enum WarehouseKind {
+  CWC
+  SWC // State Warehousing Corporation
+  PRIVATE_3PL
+  PRIVATE_2PL
+}
+
+enum TrustTier {
+  UNVERIFIED
+  VERIFIED
+  TRUSTED
+}
+
+enum SlotStatus {
+  OPEN
+  PARTIAL
+  FULL
+  WITHDRAWN
+}
+
+enum BookingStatus {
+  HELD
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+enum TrailerStatus {
+  SCHEDULED
+  ARRIVED
+  DOCKED
+  UNLOADING
+  COMPLETED
+  CANCELLED
+}
+
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  DONE
+}
+
+enum PickStrategy {
+  FIFO
+  FEFO
+  ZONE_FIRST
+}
+
+enum Severity {
+  INFO
+  WARN
+  CRITICAL
+}
+
+enum StructuralKind {
+  TILT
+  LOAD
+  CRACK
+  VIBRATION
+  HUMIDITY
+}
+
+enum QtyUom {
+  EACHES
+  PALLETS
+  CARTONS
+  SACKS
+}
+
+enum CycleCountStatus {
+  REQUESTED
+  IN_PROGRESS
+  AWAITING_TALLY
+  PENDING_APPROVAL
+  COMPLETED
+}
+
+enum CycleCountScope {
+  LOCATION
+  SKU
+}
+
+// ───────────── Identity ─────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         Role
+  providerId   String?
+  provider     Provider? @relation(fields: [providerId], references: [id])
+  createdAt    DateTime @default(now())
+  bookings        Booking[]
+  requestedCounts CycleCount[] @relation("CountRequester")
+  approvedCounts  CycleCount[] @relation("CountApprover")
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  action    String
+  entity    String
+  entityId  String?
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+}
+
+// ───────────── Network & commodities ─────────────
+
+model Warehouse {
+  id                 String        @id @default(cuid())
+  code               String        @unique
+  name               String
+  kind               WarehouseKind
+  stateCode          String        @default("GJ")
+  district           String
+  lat                Float
+  lng                Float
+  capacityMT         Float
+  usedMT             Float         @default(0)
+  tariffPerMTMonth   Float // INR
+  commodities        String[]
+  coldStorage        Boolean       @default(false)
+  certifications     String[]
+  depotDarpanId      String?
+  active             Boolean       @default(true)
+  providerId         String?
+  provider           Provider?     @relation(fields: [providerId], references: [id])
+
+  slots     CapacitySlot[]
+  zones     Zone[]
+  gateways  Gateway[]
+  assets    Asset[]
+  sensors   StructuralSensor[]
+  trailers  InboundTrailer[]
+  lots      InventoryLot[]
+  alerts    Alert[]
+  telemetry TelemetryEvent[]
+  pickRules   PickRule[]
+  skus        Sku[]
+  cycleCounts CycleCount[]
+
+  @@index([stateCode, kind])
+}
+
+model CommodityProduction {
+  id           String   @id @default(cuid())
+  stateCode    String   @default("GJ")
+  district     String
+  lat          Float
+  lng          Float
+  commodity    String
+  season       String // e.g. "2026-27"
+  forecastMT   Float
+  harvestStart DateTime
+  harvestEnd   DateTime
+
+  @@unique([district, commodity, season])
+  @@index([commodity, season])
+}
+
+// ───────────── 3PL capacity aggregator ─────────────
+
+model Provider {
+  id          String    @id @default(cuid())
+  name        String
+  tier        TrustTier @default(UNVERIFIED)
+  rating      Float     @default(3) // 0–5
+  onTimeRate  Float     @default(0.9) // 0–1
+  contactEmail String?
+  verifiedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  warehouses Warehouse[]
+  users      User[]
+}
+
+model CapacitySlot {
+  id                String     @id @default(cuid())
+  warehouseId       String
+  warehouse         Warehouse  @relation(fields: [warehouseId], references: [id])
+  startDate         DateTime
+  endDate           DateTime
+  pallets           Int
+  palletsBooked     Int        @default(0)
+  pricePerPalletDay Float // INR
+  handlingPerPallet Float      @default(0)
+  readyHours        Int        @default(24) // time to start accepting stock
+  status            SlotStatus @default(OPEN)
+  source            String     @default("PORTAL") // PORTAL | CSV | API
+  createdAt         DateTime   @default(now())
+  lines             BookingLine[]
+
+  @@index([warehouseId, startDate, endDate])
+}
+
+model Booking {
+  id        String        @id @default(cuid())
+  ref       String        @unique
+  requesterId String
+  requester User          @relation(fields: [requesterId], references: [id])
+  status    BookingStatus @default(HELD)
+  commodity String
+  holdUntil DateTime?
+  totalCost Float         @default(0)
+  notes     String?
+  createdAt DateTime      @default(now())
+  lines     BookingLine[]
+}
+
+model BookingLine {
+  id        String       @id @default(cuid())
+  bookingId String
+  booking   Booking      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  slotId    String
+  slot      CapacitySlot @relation(fields: [slotId], references: [id])
+  pallets   Int
+  days      Int
+  startDate DateTime
+  cost      Float
+}
+
+model RoutingRecommendation {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  input     Json
+  result    Json // full ranked list + per-term breakdown, for audit
+}
+
+// ───────────── Tracking & tracing (BLE + digital twin) ─────────────
+
+model Zone {
+  id               String    @id @default(cuid())
+  warehouseId      String
+  warehouse        Warehouse @relation(fields: [warehouseId], references: [id])
+  code             String
+  capacityMT       Float
+  usedMT           Float     @default(0)
+  commodityAffinity String[]
+  cold             Boolean   @default(false)
+  // Floor-plan rectangle in metres (digital twin + zone resolution)
+  x                Float     @default(0)
+  y                Float     @default(0)
+  w                Float     @default(20)
+  h                Float     @default(20)
+  lots             InventoryLot[]
+  putaways         PutawayTask[]
+
+  @@unique([warehouseId, code])
+}
+
+model Gateway {
+  id          String    @id @default(cuid())
+  warehouseId String
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id])
+  name        String
+  x           Float // metres on floor plan
+  y           Float
+  zoneCode    String?
+  apiKeyHash  String?
+  lastSeen    DateTime?
+  readings    BleReading[]
+  tags        BleTag[]
+}
+
+model BleTag {
+  id         String    @id @default(cuid())
+  mac        String    @unique
+  assetId    String?   @unique
+  asset      Asset?    @relation(fields: [assetId], references: [id])
+  batteryV   Float? // storage-cell voltage
+  pvVoltage  Float? // PV-cell harvest voltage
+  gatewayId  String?
+  gateway    Gateway?  @relation(fields: [gatewayId], references: [id])
+  lastRssi   Int?
+  lastSeen   DateTime?
+  readings   BleReading[]
+}
+
+model BleReading {
+  id        BigInt   @id @default(autoincrement())
+  tagId     String
+  tag       BleTag   @relation(fields: [tagId], references: [id])
+  gatewayId String
+  gateway   Gateway  @relation(fields: [gatewayId], references: [id])
+  rssi      Int
+  ts        DateTime @default(now())
+
+  @@index([tagId, ts])
+}
+
+model Asset {
+  id          String    @id @default(cuid())
+  warehouseId String
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id])
+  label       String
+  commodity   String?
+  mt          Float?
+  zoneCode    String? // last resolved zone
+  x           Float?
+  y           Float?
+  updatedAt   DateTime  @default(now())
+  tag         BleTag?
+
+  @@index([warehouseId, zoneCode])
+}
+
+model StructuralSensor {
+  id            String         @id @default(cuid())
+  warehouseId   String
+  warehouse     Warehouse      @relation(fields: [warehouseId], references: [id])
+  kind          StructuralKind
+  location      String
+  x             Float          @default(0)
+  y             Float          @default(0)
+  warnAbove     Float
+  criticalAbove Float
+  unit          String
+  lastValue     Float?
+  lastAt        DateTime?
+}
+
+model TelemetryEvent {
+  id          BigInt    @id @default(autoincrement())
+  warehouseId String
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id])
+  sensorId    String?
+  kind        String // TILT | LOAD | ... | TEMP | HUMIDITY
+  value       Float
+  unit        String
+  ts          DateTime  @default(now())
+  meta        Json?
+
+  @@index([warehouseId, kind, ts])
+}
+
+model Alert {
+  id          String    @id @default(cuid())
+  warehouseId String
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id])
+  severity    Severity
+  kind        String
+  message     String
+  ts          DateTime  @default(now())
+  ackAt       DateTime?
+
+  @@index([warehouseId, ts])
+}
+
+// ───────────── WMS ─────────────
+
+model InboundTrailer {
+  id          String        @id @default(cuid())
+  warehouseId String
+  warehouse   Warehouse     @relation(fields: [warehouseId], references: [id])
+  carrier     String
+  plate       String
+  commodity   String
+  expectedMT  Float
+  status      TrailerStatus @default(SCHEDULED)
+  scheduledAt DateTime
+  arrivedAt   DateTime?
+  doorNo      Int?
+  completedAt DateTime?
+
+  // Provision for a COLT-style driver check-in system. Unused in phase 1:
+  // nothing writes these except manual entry. See docs/ARCHITECTURE.md §8.
+  checkInMethod String? // e.g. "QR" | "SMS" | "KIOSK" | "GEOFENCE"
+  checkInAt     DateTime?
+  externalRef   String? // id in the external check-in system
+  carrierId     String? // carrier identity (e.g. SCAC-style code)
+
+  putaways PutawayTask[]
+
+  @@index([warehouseId, status, scheduledAt])
+}
+
+model InventoryLot {
+  id          String    @id @default(cuid())
+  warehouseId String
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id])
+  zoneId      String
+  zone        Zone      @relation(fields: [zoneId], references: [id])
+  commodity   String
+  mt          Float
+  receivedAt  DateTime
+  expiryAt    DateTime?
+
+  @@index([warehouseId, commodity, receivedAt])
+}
+
+model PutawayTask {
+  id        String         @id @default(cuid())
+  trailerId String
+  trailer   InboundTrailer @relation(fields: [trailerId], references: [id])
+  zoneId    String
+  zone      Zone           @relation(fields: [zoneId], references: [id])
+  mt        Float
+  reason    String // why the system directed it here
+  status    TaskStatus     @default(OPEN)
+  createdAt DateTime       @default(now())
+  doneAt    DateTime?
+}
+
+model PickRule {
+  id          String       @id @default(cuid())
+  warehouseId String
+  warehouse   Warehouse    @relation(fields: [warehouseId], references: [id])
+  name        String
+  strategy    PickStrategy
+  priority    Int          @default(100) // lower = evaluated first
+  commodity   String? // null = any
+  active      Boolean      @default(true)
+}
+
+model PickTask {
+  id          String     @id @default(cuid())
+  warehouseId String
+  orderRef    String
+  commodity   String
+  mt          Float
+  ruleName    String
+  lines       Json // [{lotId, zone, mt}]
+  status      TaskStatus @default(OPEN)
+  createdAt   DateTime   @default(now())
+}
+
+// ───────────── Government platform sync ─────────────
+
+model IntegrationSync {
+  id        String   @id @default(cuid())
+  system    String // SMART_PDS | DEPOT_DARPAN
+  status    String // OK | ERROR
+  mode      String // MOCK | LIVE
+  payload   Json?
+  error     String?
+  createdAt DateTime @default(now())
+
+  @@index([system, createdAt])
+}
+
+// ───────────── SKU master + cycle counts ─────────────
+
+model Sku {
+  id           String   @id @default(cuid())
+  code         String   @unique
+  name         String
+  description  String   @default("")
+  quantity     Float
+  uom          QtyUom
+  warehouseId  String
+  warehouse    Warehouse @relation(fields: [warehouseId], references: [id])
+  locationCode String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  countLines   CycleCountLine[]
+
+  @@index([warehouseId, locationCode])
+  @@index([name])
+}
+
+model CycleCount {
+  id            String            @id @default(cuid())
+  ref           String            @unique
+  warehouseId   String
+  warehouse     Warehouse         @relation(fields: [warehouseId], references: [id])
+  scope         CycleCountScope
+  status        CycleCountStatus  @default(REQUESTED)
+  notes         String?
+  requestedById String
+  requestedBy   User              @relation("CountRequester", fields: [requestedById], references: [id])
+  approvedById  String?
+  approvedBy    User?             @relation("CountApprover", fields: [approvedById], references: [id])
+  createdAt     DateTime          @default(now())
+  startedAt     DateTime?
+  talliedAt     DateTime?
+  submittedAt   DateTime?
+  approvedAt    DateTime?
+  lines         CycleCountLine[]
+
+  @@index([warehouseId, status])
+}
+
+model CycleCountLine {
+  id           String     @id @default(cuid())
+  countId      String
+  count        CycleCount @relation(fields: [countId], references: [id], onDelete: Cascade)
+  skuId        String
+  sku          Sku        @relation(fields: [skuId], references: [id])
+  locationCode String
+  systemQty    Float
+  countedQty   Float?
+  variance     Float?
+  uom          QtyUom
+  scannedAt    DateTime?
+  scanDevice   String? // HANDGUN
+
+  @@index([countId])
+}
