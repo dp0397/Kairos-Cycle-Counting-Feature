@@ -1,0 +1,11 @@
+MATNR,MAKTX,Qty On Hand,UoM,Ti x Hi,Pallet Qty,Stack Flag,Max Stack,Plant,Bin,Shelf Life Days,Hazmat Class,Colour
+BASMATI-25,Basmati Rice 25kg bag,1840,Sacks,10x5,50,Y,3,CWC Deesa,A-01-01,365,,White
+WHEAT-50,Wheat Flour 50kg bag,2200,Sacks,8x5,40,N,,CWC Deesa,A-01-02,180,,
+WHEAT-50,Wheat Flour 50kg bag,2200,Sacks,8x5,40,N,,CWC Deesa,A-01-02,180,,
+OIL-15L,Groundnut oil tin 15L,310,12 cs,,,N,,CWC Deesa,C-03-02,540,,
+OIL-5L,Mustard oil 5L,640,Cartons,12x6,,,,CWC Ahmedabad,B-01-03,540,,
+NOODLE-12,Instant noodles 12-pack,1150,Cartons,10x8,80,Y,,CWC Ahmedabad,B-01-02,270,,
+WRAP-500,Stretch film roll 500mm,260,Eaches,,24,N,,Sanand Distribution Centre,D-12-02,,,
+CHIPS-24,Potato chips 24 x 50g,780,Cartons,6x6,36,Y,2,Sanand DC,R-10-02,120,,
+CRATE-40,Cold-chain crate 40L,2400,Eaches,,20,N,,CWC Ahmedabad,D-03-01,,,Blue
+BOLT-M8,Bolt M8 x 40,five hundred,Eaches,,100,N,,CWC Palanpur,E-01-01,,,

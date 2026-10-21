@@ -1,0 +1,5 @@
+sku_name,sku_code,description,quantity,uom,ti_x_hi,units_per_pallet_or_bin,stackable,max_stack_units,warehouse,location,weekly_demand,oem,manufacturer
+Basmati Rice 25kg,8901234500011,Premium long-grain basmati 25kg bag,1840,Sacks,10x5,50,yes,3,CWC Deesa,A-01-01,900,,Daawat
+Groundnut Oil 15L,8901234500028,Refined groundnut oil tin 15L,310,Cartons,8x4,32,no,,CWC Deesa,C-03-02,260,,
+Mixed Grocery Pallet,,Mixed FMCG pallet,48,Pallets,6x4,24,no,,CWC Ahmedabad,P-01-01,40,,
+Pallet Wrap 500mm,,Stretch film roll,260,Eaches,,24,no,,Sanand Distribution Centre,D-12-02,90,,
